@@ -5,6 +5,8 @@
 
 A comprehensive data science analysis of Earth's surface temperature record spanning **144 years (1880–2024)**, combining four independent datasets, full exploratory data analysis, and seven machine learning / statistical algorithms.
 
+The notebook has been fully executed end-to-end (all 35 code cells produce real output — charts, tables, and printed statistics — viewable directly on GitHub without running anything yourself) and reviewed for correctness: see [Methodology notes & fixes](#methodology-notes--fixes) below for what changed and why.
+
 ---
 
 ## Data Sources
@@ -16,7 +18,7 @@ A comprehensive data science analysis of Earth's surface temperature record span
 | **NOAA ESRL (Mauna Loa)** | Atmospheric CO₂ annual means | 1959–2024 |
 | **Our World in Data / OWID** | Country-level GHG temperature forcing | 1990–2022 |
 
-All datasets are downloaded directly at notebook run-time — no manual downloads required.
+All datasets are downloaded directly at notebook run-time — no manual downloads required. NASA's GISTEMP endpoint is occasionally unreachable from some networks (sandboxed CI runners, restrictive firewalls, or NASA-side downtime); if so, the notebook automatically falls back to a fixed, dated third-party snapshot and prints a warning rather than crashing. When the fallback is used, GISTEMP-derived figures reflect that snapshot's date, not the live present day — see the fetch cell's output for whether it was used on any given run.
 
 ---
 
@@ -33,7 +35,7 @@ All datasets are downloaded directly at notebook run-time — no manual download
 | 7 | **World Temperature Map** | Choropleth (static Matplotlib + interactive Plotly), Arctic amplification |
 | 8 | **Multi-Source Comparison** | GISTEMP vs Berkeley Earth validation |
 | 9 | **ML Regression** | Linear, Polynomial (deg 2 & 3), Random Forest with time-series CV |
-| 10 | **Forecasting — ARIMA & Prophet** | ADF stationarity test, ARIMA(2,1,2), Facebook Prophet |
+| 10 | **Forecasting — ARIMA & Prophet** | ADF stationarity test, AIC-selected ARIMA order, Facebook Prophet |
 | 11 | **Clustering & PCA** | K-Means (k=4) climate regimes, PCA on zonal profiles |
 | 12 | **Anomaly Detection** | Changepoint detection (PELT), Isolation Forest |
 | 13 | **Key Findings** | Summary table of all major results |
@@ -42,16 +44,40 @@ All datasets are downloaded directly at notebook run-time — no manual download
 
 ## Key Findings
 
+These are the **actual verified numbers from a real, fully-executed run** of the notebook (previous versions of this table were written before the notebook had ever been run end-to-end — see [Methodology notes & fixes](#methodology-notes--fixes)). Exact figures will shift slightly run-to-run as NASA/NOAA update their series, and further if the GISTEMP fallback mirror is used instead of the live source (see [Data Sources](#data-sources)):
+
 | Metric | Value |
 |--------|-------|
-| Total warming since 1880 | **+1.2 to +1.5 °C** |
-| 21st-century warming rate | **~0.20 °C/decade** (2× the 20th-century average) |
-| CO₂ rise (1959 → 2024) | **316 → 424 ppm (+34%)** |
+| Total warming (1880 → last complete year) | **+1.37 °C** |
+| Linear warming rate, full record | **+0.079 °C/decade** |
+| 21st-century warming rate (2000 → present) | **+0.234 °C/decade** — roughly 3× the full-record rate |
+| CO₂ rise (1959 → 2025) | **316.0 → 427.4 ppm (+111.4 ppm, +35%)** |
 | CO₂–Temperature correlation | **r > 0.95** (p < 0.001) |
-| Arctic amplification | Polar regions warm **2–4× the global average** |
-| Most anomalous years (Isolation Forest) | **1998, 2016, 2023** (El Niño peaks) |
-| Structural break (changepoint) | **~1975–1980** — onset of accelerated warming |
-| ARIMA forecast 2035 | **+1.5 to +1.8 °C** above 1951–1980 baseline |
+| NH vs. SH warming (recent decade) | **NH warms ~1.8×** as fast as SH |
+| Arctic amplification (general climate-science finding, not this notebook's own metric) | Polar regions warm **2–4× the global average** |
+| Record warmest year | **2023 (+1.15 °C)** in this run |
+| Anomalous years (Isolation Forest) | **1904, 1909, 1917** (early-record outliers) **+ 2015–2022** (recent cluster) — not a single set of El Niño peaks |
+| Structural breaks (PELT changepoint) | **1935, 1980, 2000, 2015** — multiple regime shifts, not one single break |
+| ARIMA forecast 2035 (AIC-selected order, not a fixed (2,1,2)) | **+1.07 °C** above 1951–1980 baseline |
+
+---
+
+## Methodology notes & fixes
+
+This notebook was reviewed and corrected in six areas (in priority order of what was wrong):
+
+1. **The notebook had never been executed.** Every code cell showed only source, no output — the Key Findings table above was apparently written without ever running the analysis (several of its numbers didn't match what the code actually produces, e.g. the Isolation Forest years and the ARIMA forecast). It's now fully executed end-to-end with zero errors, and this README's table reflects the real output.
+2. **SSL certificate verification was disabled** (`ssl.CERT_NONE`, `check_hostname=False`) for every data fetch — a real man-in-the-middle exposure. Fixed to use a properly verified default context via `certifi`.
+3. **The Random Forest (Section 9B) had target leakage** — it predicted `Annual` from the Jan–Dec monthly columns that `Annual` is literally defined as the mean of. Replaced with a genuinely independent feature set (Year, Decade, CO₂ level, lagged prior-year anomalies). The corrected, honest result: in-sample R² still looks strong (~0.99) but 5-fold time-series CV R² is actually **negative** (≈ −2.4) — the model doesn't generalize to unseen future periods. Less flattering than the original leaky number, but real.
+4. **ARIMA's (2,1,2) order was hardcoded** with no visible connection to the ACF/PACF diagnostics computed right above it. Replaced with a small AIC grid search over the training period, which selects **(1,1,1)** — a materially different, data-driven choice that also changes the 2035 forecast substantially (see table above).
+5. **The world map assigns one anomaly value per country from centroid latitude alone** — a coarse proxy that visually flattens large, multi-zone countries (Russia, Canada, the US, Brazil, Australia). Now explicitly caveated in the notebook rather than described as "physically grounded."
+6. **The polynomial regression (Section 9A) had no held-out test**, unlike the ARIMA/RF sections. Added the same train/test split (≤2014 / >2014). Result: **all three curves (linear, poly-2, poly-3) post negative test R²** — none extrapolate the post-2014 acceleration well, which is itself an important, honest finding about the limits of simple trend extrapolation on this series.
+
+Two additional bugs surfaced only once the notebook was actually run (not part of the original 6-item review, found by execution):
+- `geopandas.datasets.get_path('naturalearth_lowres')` was removed in geopandas 1.0+ — the world map now fetches the same Natural Earth country layer directly from its canonical source.
+- Two chart-label strings contained a literal embedded newline inside a single-quoted string (invalid Python), and one OWID data-cleaning line raised `TypeError: bad operand type for unary ~: 'float'` on newer pandas (inverting a NaN-containing mask) — both fixed.
+
+`requirements.txt` was also pinned to exact tested versions (previously open `>=` ranges) and dropped an unused `xarray` dependency.
 
 ---
 
